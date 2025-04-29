@@ -1,0 +1,77 @@
+/* Custom styles for Email Verification System */
+
+/* Add some subtle animation to the form elements */
+.form-control:focus {
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    transition: box-shadow 0.3s ease;
+}
+
+/* Style the loading spinner */
+#loading {
+    margin: 2rem auto;
+}
+
+/* Add some space between verification steps cards */
+.card {
+    transition: transform 0.2s ease-in-out;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+}
+
+/* Custom icon styling */
+.fa-3x {
+    opacity: 0.8;
+}
+
+/* Add a smooth transition to badge colors */
+.badge {
+    transition: background-color 0.3s ease;
+}
+
+/* Add some padding to the results table */
+.table td, .table th {
+    padding: 0.75rem;
+    vertical-align: middle;
+}
+
+/* Pre/code block styling */
+pre {
+    border-radius: 4px;
+    margin-bottom: 1rem;
+    overflow-x: auto;
+}
+
+code {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.9rem;
+}
+
+/* Remove footer from sticking to content on short pages */
+html, body {
+    height: 100%;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+}
+
+main {
+    flex: 1 0 auto;
+}
+
+footer {
+    flex-shrink: 0;
+}
+
+/* API documentation styling */
+.bg-dark code {
+    color: #9cdcfe;
+}
+
+/* Fix the footer date issue with Jinja template */
+.footer .text-muted {
+    color: #6c757d;
+}

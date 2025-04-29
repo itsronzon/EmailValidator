@@ -1,0 +1,121 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card shadow">
+            <div class="card-header bg-primary text-white">
+                <h2 class="mb-0">
+                    <i class="fas fa-envelope-check me-2"></i>Email Verification Tool
+                </h2>
+            </div>
+            <div class="card-body">
+                <p class="lead">
+                    Verify an email address with our complete verification system. We'll check:
+                </p>
+                <div class="row my-4">
+                    <div class="col-md-4">
+                        <div class="card h-100 bg-dark">
+                            <div class="card-body text-center">
+                                <i class="fas fa-code fa-3x mb-3 text-info"></i>
+                                <h5 class="card-title">Syntax</h5>
+                                <p class="card-text">Validates the email format against RFC 5322 standards</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 bg-dark">
+                            <div class="card-body text-center">
+                                <i class="fas fa-globe fa-3x mb-3 text-info"></i>
+                                <h5 class="card-title">Domain</h5>
+                                <p class="card-text">Confirms that the domain exists and is reachable</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 bg-dark">
+                            <div class="card-body text-center">
+                                <i class="fas fa-server fa-3x mb-3 text-info"></i>
+                                <h5 class="card-title">MX Records</h5>
+                                <p class="card-text">Checks if the domain can receive email</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <form id="verification-form" class="mt-4">
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Enter email address to verify:</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-at"></i></span>
+                            <input type="email" class="form-control" id="email" name="email" placeholder="example@domain.com" required>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-search me-2"></i>Verify
+                            </button>
+                        </div>
+                    </div>
+                </form>
+
+                <div id="loading" class="text-center my-4" style="display: none;">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Verifying email address...</p>
+                </div>
+
+                <div id="results-container" style="display: none;">
+                    <h3 class="mt-4">Verification Results</h3>
+                    <div class="card mb-3 bg-dark">
+                        <div class="card-header">
+                            <span class="fw-bold">Email: </span>
+                            <span id="result-email"></span>
+                            <span id="result-verdict" class="float-end badge"></span>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-dark">
+                                    <thead>
+                                        <tr>
+                                            <th>Check</th>
+                                            <th>Status</th>
+                                            <th>Details</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="results-table">
+                                        <!-- Results will be inserted here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-4 shadow">
+            <div class="card-header bg-dark">
+                <h3 class="mb-0">API Usage</h3>
+            </div>
+            <div class="card-body">
+                <p>You can also access our email verification service programmatically:</p>
+                <div class="bg-dark p-3 rounded">
+                    <code>GET /api/verify?email=example@domain.com</code>
+                </div>
+                <p class="mt-3">Response format:</p>
+                <pre class="bg-dark p-3 rounded"><code>{
+  "success": true,
+  "message": "Verification completed",
+  "results": {
+    "email": "example@domain.com",
+    "is_valid_format": true,
+    "has_valid_domain": true,
+    "has_mx_records": true,
+    "verification_steps": [...],
+    "is_deliverable": true
+  }
+}</code></pre>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
