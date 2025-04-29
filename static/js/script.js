@@ -51,6 +51,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Clear previous results
         resultsTable.innerHTML = '';
+        document.getElementById('score-breakdown').innerHTML = '';
         
         // Display verdict badge
         if (results.is_deliverable) {
@@ -61,13 +62,75 @@ document.addEventListener('DOMContentLoaded', function() {
             resultVerdict.className = 'float-end badge bg-danger';
         }
         
+        // Display score gauge
+        const scoreGauge = document.getElementById('score-gauge');
+        const scoreValue = results.score || 0;
+        scoreGauge.style.width = `${scoreValue}%`;
+        scoreGauge.setAttribute('aria-valuenow', scoreValue);
+        scoreGauge.textContent = `${scoreValue}%`;
+        
+        // Set color based on score
+        if (scoreValue >= 80) {
+            scoreGauge.className = 'progress-bar bg-success';
+        } else if (scoreValue >= 50) {
+            scoreGauge.className = 'progress-bar bg-warning';
+        } else {
+            scoreGauge.className = 'progress-bar bg-danger';
+        }
+        
+        // Set score description
+        const scoreDescription = document.getElementById('score-description');
+        if (scoreValue >= 80) {
+            scoreDescription.innerHTML = '<strong class="text-success">High deliverability</strong> - Email is likely valid and will be delivered';
+        } else if (scoreValue >= 50) {
+            scoreDescription.innerHTML = '<strong class="text-warning">Medium deliverability</strong> - Email might be valid but has some issues';
+        } else {
+            scoreDescription.innerHTML = '<strong class="text-danger">Low deliverability</strong> - Email is likely invalid or undeliverable';
+        }
+        
+        // Display score breakdown if available
+        if (results.score_details) {
+            const scoreBreakdown = document.getElementById('score-breakdown');
+            
+            // Create items for each score component
+            Object.entries(results.score_details).forEach(([key, value]) => {
+                if (value !== 0) { // Only show non-zero components
+                    const item = document.createElement('li');
+                    item.className = 'list-group-item bg-dark text-white border-secondary';
+                    
+                    // Format the key name
+                    const formattedKey = key.replace(/_/g, ' ');
+                    
+                    // Set positive or negative indicator
+                    let indicator = '';
+                    let valueClass = '';
+                    if (value > 0) {
+                        indicator = '<i class="fas fa-plus-circle text-success me-2"></i>';
+                        valueClass = 'text-success';
+                    } else {
+                        indicator = '<i class="fas fa-minus-circle text-danger me-2"></i>';
+                        valueClass = 'text-danger';
+                    }
+                    
+                    item.innerHTML = `${indicator}<span class="text-capitalize">${formattedKey}:</span> <span class="float-end ${valueClass}">${value > 0 ? '+' : ''}${value}</span>`;
+                    scoreBreakdown.appendChild(item);
+                }
+            });
+            
+            // Add total score
+            const totalItem = document.createElement('li');
+            totalItem.className = 'list-group-item bg-dark text-white border-secondary fw-bold';
+            totalItem.innerHTML = `<span>Total Score:</span> <span class="float-end">${results.score}/100</span>`;
+            scoreBreakdown.appendChild(totalItem);
+        }
+        
         // Add rows for each verification step
         if (results.verification_steps && results.verification_steps.length > 0) {
             results.verification_steps.forEach(step => {
                 const row = document.createElement('tr');
                 
                 // Step name (capitalized)
-                const stepName = step.step.replace('_check', '').replace('_', ' ');
+                const stepName = step.step.replace('_check', '').replace(/_/g, ' ');
                 const stepCell = document.createElement('td');
                 stepCell.innerHTML = `<i class="${getStepIcon(step.step)} me-2"></i>${capitalizeFirstLetter(stepName)}`;
                 row.appendChild(stepCell);
@@ -105,6 +168,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 return 'fas fa-globe';
             case 'mx_check':
                 return 'fas fa-server';
+            case 'disposable_check':
+                return 'fas fa-recycle';
+            case 'popular_domain_check':
+                return 'fas fa-star';
+            case 'pattern_check':
+                return 'fas fa-fingerprint';
             default:
                 return 'fas fa-check-circle';
         }
