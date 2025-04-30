@@ -1,7 +1,10 @@
 import re
 import socket
 import logging
+import smtplib
 import dns.resolver
+import random
+import string
 from dns.exception import DNSException
 from dns.resolver import NXDOMAIN, NoAnswer, Timeout
 
@@ -13,6 +16,7 @@ class EmailVerifier:
     - Syntax validation using regex
     - Domain existence verification
     - MX record checking
+    - SMTP server validation (recipient verification)
     - Disposable email detection
     - Common patterns evaluation
     - Deliverability scoring
@@ -36,12 +40,15 @@ class EmailVerifier:
         
         # Approximate likelihood scoring weights
         self.score_weights = {
-            'syntax': 15,             # Base score for valid syntax
-            'domain_exists': 20,      # Score for domain existing
-            'mx_records': 25,         # Score for having MX records
+            'syntax': 10,             # Base score for valid syntax
+            'domain_exists': 15,      # Score for domain existing
+            'mx_records': 15,         # Score for having MX records
+            'smtp_check': 35,         # Score for SMTP recipient validation
             'disposable_domain': -30, # Penalty for disposable domains
-            'popular_domain': 15,     # Bonus for common email providers
-            'name_pattern': 10        # Bonus for standard name patterns
+            'popular_domain': 10,     # Bonus for common email providers
+            'name_pattern': 5,        # Bonus for standard name patterns
+            'catch_all': -20,         # Penalty for catch-all domains
+            'role_account': -15       # Penalty for common role-based addresses
         }
         
         # Common/popular email provider domains
@@ -50,6 +57,14 @@ class EmailVerifier:
             'icloud.com', 'protonmail.com', 'mail.com', 'zoho.com', 'gmx.com',
             'yandex.com', 'live.com', 'comcast.net', 'verizon.net', 'att.net',
             'msn.com', 'me.com', 'mac.com', 'fastmail.com', 'mail.ru'
+        ]
+        
+        # Common role-based email addresses
+        self.role_accounts = [
+            'admin', 'webmaster', 'support', 'info', 'contact', 'sales', 'help',
+            'noreply', 'no-reply', 'postmaster', 'hostmaster', 'abuse', 'webadmin',
+            'marketing', 'office', 'mail', 'feedback', 'team', 'customerservice',
+            'hello', 'billing', 'jobs', 'hr', 'careers', 'service', 'orders'
         ]
     
     def verify_email(self, email):
@@ -68,6 +83,9 @@ class EmailVerifier:
             'has_valid_domain': False,
             'has_mx_records': False,
             'is_disposable': False,
+            'is_role_account': False,
+            'is_catch_all': False,
+            'smtp_check': False,
             'score': 0,            # Score from 0-100 indicating likelihood of deliverability
             'score_details': {},   # Detailed breakdown of the score
             'verification_steps': [],
@@ -79,9 +97,12 @@ class EmailVerifier:
             'syntax': 0,
             'domain_exists': 0,
             'mx_records': 0,
+            'smtp_check': 0,
             'disposable_domain': 0,
             'popular_domain': 0,
-            'name_pattern': 0
+            'name_pattern': 0,
+            'role_account': 0,
+            'catch_all': 0
         }
         
         # Step 1: Syntax Check
@@ -106,7 +127,20 @@ class EmailVerifier:
         # Extract domain and local part from email
         local_part, domain = email.split('@')
         
-        # Step 2: Domain Check
+        # Step 2: Check if email is a role account
+        role_result = self._check_role_account(local_part)
+        results['verification_steps'].append({
+            'step': 'role_account_check',
+            'passed': not role_result['is_role_account'],
+            'message': role_result['message']
+        })
+        results['is_role_account'] = role_result['is_role_account']
+        
+        # Adjust score for role accounts
+        if role_result['is_role_account']:
+            score_details['role_account'] = self.score_weights['role_account']
+        
+        # Step 3: Domain Check
         domain_result = self._check_domain(domain)
         results['verification_steps'].append({
             'step': 'domain_check',
@@ -118,8 +152,13 @@ class EmailVerifier:
         # Add to score if domain exists
         if domain_result['passed']:
             score_details['domain_exists'] = self.score_weights['domain_exists']
+        else:
+            # If domain doesn't exist, don't proceed with further checks
+            results['score_details'] = score_details
+            results['score'] = max(0, min(100, sum(score_details.values())))
+            return results
         
-        # Step 3: MX Record Check
+        # Step 4: MX Record Check
         mx_result = self._check_mx_records(domain)
         results['verification_steps'].append({
             'step': 'mx_check',
@@ -131,8 +170,35 @@ class EmailVerifier:
         # Add to score if MX records exist
         if mx_result['passed']:
             score_details['mx_records'] = self.score_weights['mx_records']
+        else:
+            # If no MX records, don't proceed with SMTP checks
+            results['score_details'] = score_details
+            results['score'] = max(0, min(100, sum(score_details.values())))
+            return results
         
-        # Step 4: Check if disposable email
+        # Step 5: SMTP Validation - Only proceed if we have MX records
+        smtp_result = self._check_smtp(email, domain, mx_result.get('mx_hosts', []))
+        results['verification_steps'].append({
+            'step': 'smtp_check',
+            'passed': smtp_result['passed'],
+            'message': smtp_result['message']
+        })
+        results['smtp_check'] = smtp_result['passed']
+        results['is_catch_all'] = smtp_result.get('is_catch_all', False)
+        
+        # Adjust score based on SMTP results
+        if smtp_result['passed']:
+            score_details['smtp_check'] = self.score_weights['smtp_check']
+        # Apply penalty for catch-all domains
+        if smtp_result.get('is_catch_all', False):
+            score_details['catch_all'] = self.score_weights['catch_all']
+            results['verification_steps'].append({
+                'step': 'catch_all_check',
+                'passed': False,
+                'message': 'Domain accepts all email addresses (catch-all)'
+            })
+        
+        # Step 6: Check if disposable email
         disposable_result = self._check_disposable_email(domain)
         results['verification_steps'].append({
             'step': 'disposable_check',
@@ -145,7 +211,7 @@ class EmailVerifier:
         if disposable_result['is_disposable']:
             score_details['disposable_domain'] = self.score_weights['disposable_domain']
         
-        # Step 5: Check if domain is from a popular provider
+        # Step 7: Check if domain is from a popular provider
         popular_result = self._check_popular_domain(domain)
         results['verification_steps'].append({
             'step': 'popular_domain_check',
@@ -157,7 +223,7 @@ class EmailVerifier:
         if popular_result['is_popular']:
             score_details['popular_domain'] = self.score_weights['popular_domain']
         
-        # Step 6: Check if the email follows common patterns
+        # Step 8: Check if the email follows common patterns
         pattern_result = self._check_email_pattern(local_part)
         results['verification_steps'].append({
             'step': 'pattern_check',
@@ -174,13 +240,21 @@ class EmailVerifier:
         results['score'] = max(0, min(100, final_score))
         results['score_details'] = score_details
         
-        # Set deliverability based on all checks
-        # Basic deliverability still requires the three fundamental checks
+        # Set deliverability based on all checks - now includes SMTP check
         results['is_deliverable'] = (
             results['is_valid_format'] and 
             results['has_valid_domain'] and 
-            results['has_mx_records']
+            results['has_mx_records'] and
+            (results['smtp_check'] or results['is_catch_all'])
         )
+        
+        # If email is from a popular provider but SMTP check failed, likely not deliverable
+        if popular_result['is_popular'] and not results['smtp_check'] and not results['is_catch_all']:
+            results['is_deliverable'] = False
+        
+        # Adjust final score - reduce by 30% if not deliverable according to SMTP
+        if not results['smtp_check'] and not results['is_catch_all'] and results['score'] > 30:
+            results['score'] = int(results['score'] * 0.7)
         
         return results
     
@@ -299,37 +373,44 @@ class EmailVerifier:
                 mx_hosts = [mx.exchange.to_text() for mx in mx_records]
                 return {
                     'passed': True,
-                    'message': f'Domain has {len(mx_records)} MX records: {", ".join(mx_hosts)}'
+                    'message': f'Domain has {len(mx_records)} MX records: {", ".join(mx_hosts)}',
+                    'mx_hosts': mx_hosts  # Return the MX hosts for SMTP verification
                 }
             return {
                 'passed': False,
-                'message': f'No MX records found for domain {domain}'
+                'message': f'No MX records found for domain {domain}',
+                'mx_hosts': []
             }
         except NXDOMAIN:
             return {
                 'passed': False,
-                'message': f'Domain {domain} does not exist'
+                'message': f'Domain {domain} does not exist',
+                'mx_hosts': []
             }
         except NoAnswer:
             return {
                 'passed': False,
-                'message': f'No MX records found for domain {domain}'
+                'message': f'No MX records found for domain {domain}',
+                'mx_hosts': []
             }
         except Timeout:
             return {
                 'passed': False,
-                'message': f'Timeout while checking MX records for {domain}'
+                'message': f'Timeout while checking MX records for {domain}',
+                'mx_hosts': []
             }
         except DNSException as e:
             return {
                 'passed': False,
-                'message': f'Error checking MX records: {str(e)}'
+                'message': f'Error checking MX records: {str(e)}',
+                'mx_hosts': []
             }
         except Exception as e:
             logger.exception(f"Error checking MX records for {domain}")
             return {
                 'passed': False,
-                'message': f'MX record check error: {str(e)}'
+                'message': f'MX record check error: {str(e)}',
+                'mx_hosts': []
             }
     
     def _check_disposable_email(self, domain):
@@ -376,6 +457,158 @@ class EmailVerifier:
             return {
                 'is_popular': False,
                 'message': f'Could not determine if {domain} is a popular domain: {str(e)}'
+            }
+    
+    def _check_role_account(self, local_part):
+        """Check if the email is a common role-based account"""
+        try:
+            # Check if the local part is a known role account
+            is_role = local_part.lower() in self.role_accounts
+            
+            if is_role:
+                return {
+                    'is_role_account': True,
+                    'message': f'Email address is a role-based account ({local_part})'
+                }
+            else:
+                return {
+                    'is_role_account': False,
+                    'message': 'Email address is not a common role-based account'
+                }
+        except Exception as e:
+            logger.exception(f"Error checking if '{local_part}' is a role account")
+            # Default to false if there's an error
+            return {
+                'is_role_account': False,
+                'message': f'Could not determine if email is a role account: {str(e)}'
+            }
+    
+    def _check_smtp(self, email, domain, mx_hosts):
+        """
+        Verify email existence by connecting to the mail server
+        
+        This method attempts to connect to the mail server and check if the 
+        recipient exists without actually sending an email.
+        """
+        # Default result if all checks fail
+        result = {
+            'passed': False,
+            'is_catch_all': False,
+            'message': 'SMTP verification failed'
+        }
+        
+        if not mx_hosts:
+            return {
+                'passed': False,
+                'message': 'Cannot perform SMTP check: No MX hosts available'
+            }
+        
+        # Generate a random string for the sender domain
+        # This helps avoid detection as a verification attempt
+        random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
+        from_address = f"verify-{random_str}@example.com"
+        
+        # First, try to connect to the primary MX server
+        primary_mx = mx_hosts[0] if mx_hosts else None
+        if not primary_mx:
+            return result
+        
+        # Safety for common email providers - we cannot reliably check
+        # Gmail, Yahoo, Outlook, etc. using SMTP commands due to anti-spam measures
+        if domain.lower() in ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'aol.com']:
+            # For these domains we'll rely on MX records and domain validation
+            return {
+                'passed': True,
+                'message': f'SMTP check skipped for {domain} (major provider with anti-spam measures)'
+            }
+            
+        try:
+            # Try to connect to the mail server with a 5 second timeout
+            server = smtplib.SMTP(timeout=5)
+            server.set_debuglevel(0)  # Set to 1 for debugging
+            
+            # Connect to the server
+            connect_response = server.connect(primary_mx)
+            
+            # Say hello to the server
+            helo_response = server.helo('example.com')
+            
+            # Start the SMTP session
+            server.mail(from_address)
+            
+            # Check if the recipient exists
+            rcpt_response = server.rcpt(email)
+            
+            # Close the connection
+            server.quit()
+            
+            # Check if the recipient was accepted (250 status)
+            if rcpt_response[0] == 250:
+                result = {
+                    'passed': True,
+                    'message': f'Email address {email} exists on the mail server'
+                }
+            elif rcpt_response[0] >= 500:
+                result = {
+                    'passed': False,
+                    'message': f'Email address {email} does not exist on the mail server'
+                }
+            else:
+                result = {
+                    'passed': False,
+                    'message': f'Inconclusive SMTP check for {email}: {rcpt_response}'
+                }
+            
+            # Check for catch-all domain by testing a randomly generated email
+            # that almost certainly doesn't exist
+            random_local = ''.join(random.choices(string.ascii_lowercase + string.digits, k=15))
+            random_email = f"{random_local}@{domain}"
+            
+            # Start a new connection
+            server = smtplib.SMTP(timeout=5)
+            server.set_debuglevel(0)
+            server.connect(primary_mx)
+            server.helo('example.com')
+            server.mail(from_address)
+            random_rcpt_response = server.rcpt(random_email)
+            server.quit()
+            
+            # If a completely random address is accepted, it's likely a catch-all domain
+            if random_rcpt_response[0] == 250:
+                result['is_catch_all'] = True
+                result['message'] += ' (but domain appears to be catch-all)'
+            
+            return result
+            
+        except smtplib.SMTPConnectError as e:
+            logger.warning(f"SMTP connection error for {domain}: {str(e)}")
+            return {
+                'passed': False,
+                'message': f'Failed to connect to mail server: {str(e)}'
+            }
+        except smtplib.SMTPServerDisconnected as e:
+            logger.warning(f"SMTP server disconnected during verification of {email}: {str(e)}")
+            return {
+                'passed': False,
+                'message': f'Mail server disconnected during verification: {str(e)}'
+            }
+        except smtplib.SMTPResponseException as e:
+            logger.warning(f"SMTP error for {email}: {e.smtp_code} - {e.smtp_error}")
+            # Some servers return specific error codes for non-existent users
+            if e.smtp_code in [550, 551, 552, 553, 450, 451, 452]:
+                return {
+                    'passed': False,
+                    'message': f'Email address not accepted by server: {e.smtp_code} - {e.smtp_error}'
+                }
+            return {
+                'passed': False,
+                'message': f'SMTP error: {e.smtp_code} - {e.smtp_error}'
+            }
+        except Exception as e:
+            logger.exception(f"Error during SMTP verification of {email}")
+            return {
+                'passed': False,
+                'message': f'SMTP verification error: {str(e)}'
             }
     
     def _check_email_pattern(self, local_part):
