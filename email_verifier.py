@@ -703,8 +703,8 @@ class EmailVerifier:
             # For any other errors, log and gracefully degrade
             logger.debug(f"SMTP verification skipped for {email}: {str(e)}")
             return {
-                'passed': True,  # Changed to True to avoid false negatives
-                'message': f'SMTP verification limited: Using inferred validation'
+                'passed': False,  # Changed to True to avoid false negatives
+                'message': f'SMTP verification inconclusive: Falling back to limited validation'
             }
     
     def _check_email_pattern(self, local_part):
