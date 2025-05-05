@@ -29,6 +29,7 @@ class EmailVerifier:
         self.resolver = dns.resolver.Resolver()
         self.resolver.timeout = 5.0  # 5 second timeout for DNS queries
         self.resolver.lifetime = 5.0  # 5 second lifetime for DNS queries
+        self.resolver.nameservers = ['8.8.8.8', '1.1.1.1']
         
         # List of known disposable email domains
         self.disposable_domains = [
